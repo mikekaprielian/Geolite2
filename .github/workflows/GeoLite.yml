@@ -1,0 +1,66 @@
+#
+# Copyright (c) 2020-2021 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/GeoLite.mmdb
+# Description: Publish GeoLite.mmdb
+#
+
+name: Publish GeoLite.mmdb
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 1 */3 * *
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Download GeoLite.mmdb
+      run: |
+        wget -nv -O- "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${{ secrets.LICENSE_KEY }}&suffix=tar.gz" | tar zxv
+        VERSION_FOLDER=$(find GeoLite* -maxdepth 0 -type d)  # Get the version folder name
+        VERSION=$(echo "$VERSION_FOLDER" | sed 's/.*_//')     # Extract the version from the folder name
+        EPOCH_DATE=$(date -d "$VERSION" +"%s")               # Convert version to Epoch date
+        mkdir -p upload
+        mv -v GeoLite*/*.mmdb GeoLite2.mmdb
+        cp -v GeoLite2.mmdb upload
+        echo "{\"date\": \"$EPOCH_DATE\", \"version\": \"$VERSION\"}" > upload/GeoLite2_status.json
+        echo "TAG_NAME=$(date +"%Y.%m.%d")" >> $GITHUB_ENV
+
+    - name: Push to "download" branch
+      run: |
+        cd upload
+        git init
+        git config user.name "${{ github.actor }}"
+        git config user.email "${{ github.actor }}@users.noreply.github.com"
+        git checkout -b download
+        git add .
+        git commit -m "${{ env.TAG_NAME }}"
+        git remote add origin "https://${{ github.actor }}:${{ secrets.ACTIONS_TOKEN }}@github.com/${{ github.repository }}"
+        git push -f origin download
+
+    - name: Upload to Releases
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        body: ${{ env.TAG_NAME }}
+        files: |
+          upload/*.mmdb
+          upload/GeoLite2_status.json
+        
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.2.1
+      with:
+        keep_latest: 2
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
